@@ -74,22 +74,46 @@
 
 /* DO NOT change MAX_BUF_SIZE */
 #define MAX_BUF_SIZE    10
+int buffer[MAX_BUF_SIZE];
+int count = 0, head = 0, tail = 0;
+pthread_cond_t cond_nonempty, cond_nonfull;
+pthread_mutex_t queue_lock;
 
 void buffer_init(void){
-    printf("buffer_init called: doing nothing\n"); /* FIX ME */
+	pthread_cond_init(&cond_nonempty, NULL);
+	pthread_cond_init(&cond_nonfull, NULL);
+	pthread_mutex_init(&queue_lock, NULL);
 }
 
 void buffer_insert(int number){
-    printf("buffer_insert called with %d: doing nothing\n", number); /* FIX ME */
+	pthread_mutex_lock(&queue_lock);
+	while (count == MAX_BUF_SIZE) {
+		pthread_cond_wait(&cond_nonfull, &queue_lock);
+	}
+	buffer[head] = number;
+	printf("pruoducer inserting %d at location = %d\n", number, head);
+	head = (head + 1) % MAX_BUF_SIZE;
+	count++;
+	pthread_cond_broadcast(&cond_nonempty);
+	pthread_mutex_unlock(&queue_lock);
 }
 
 int buffer_extract(int consumerno){
-    printf("buffer_extract called: returning -1\n"); /* FIX ME */
-    return(-1);                   /* FIX ME */
+	pthread_mutex_lock(&queue_lock);
+	while (!count) {
+		pthread_cond_wait(&cond_nonempty, &queue_lock);
+	}
+	int ans = buffer[tail];
+	printf("consumer %d extract %d from %d\n", consumerno, ans, tail);
+	tail = (tail + 1) % MAX_BUF_SIZE;
+	count--;
+	pthread_cond_broadcast(&cond_nonfull);
+	pthread_mutex_unlock(&queue_lock);
+	return ans;
 }
 
 void buffer_clean(void){
-    printf("buffer_clean called: doing nothing\n"); /* FIX ME */
+    printf("buffer_clean called: doing nothing\n");
 }
 
 /**************************************************************************\
