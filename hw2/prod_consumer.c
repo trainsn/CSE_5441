@@ -74,7 +74,7 @@
 
 /* DO NOT change MAX_BUF_SIZE */
 #define MAX_BUF_SIZE    10
-int buffer[MAX_BUF_SIZE];
+int* buffer;
 int count = 0, head = 0, tail = 0;
 pthread_cond_t cond_nonempty, cond_nonfull;
 pthread_mutex_t queue_lock;
@@ -83,6 +83,7 @@ void buffer_init(void){
 	pthread_cond_init(&cond_nonempty, NULL);
 	pthread_cond_init(&cond_nonfull, NULL);
 	pthread_mutex_init(&queue_lock, NULL);
+	buffer = (int *)malloc(sizeof(int) * MAX_BUF_SIZE);
 }
 
 void buffer_insert(int number){
@@ -113,7 +114,10 @@ int buffer_extract(int consumerno){
 }
 
 void buffer_clean(void){
-    printf("buffer_clean called: doing nothing\n");
+	pthread_mutex_destroy(&queue_lock);
+	pthread_cond_destroy(&cond_nonempty);
+	pthread_cond_destroy(&cond_nonfull);
+	free(buffer);
 }
 
 /**************************************************************************\
@@ -240,5 +244,7 @@ int main(int argc, char *argv[]){
 
         assert(test == 0);
     }
+	buffer_clean();
+
     return(0);
 }
