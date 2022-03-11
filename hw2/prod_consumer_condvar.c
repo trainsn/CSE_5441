@@ -92,7 +92,7 @@ void buffer_insert(int number){
 		pthread_cond_wait(&cond_nonfull, &queue_lock);
 	}
 	buffer[head] = number;
-	printf("pruoducer inserting %d at location = %d\n", number, head);
+	printf("producer inserting %d at location = %d\n", number, head);
 	head = (head + 1) % MAX_BUF_SIZE;
 	count++;
 	pthread_cond_broadcast(&cond_nonempty);
@@ -118,6 +118,7 @@ void buffer_clean(void){
 	pthread_cond_destroy(&cond_nonempty);
 	pthread_cond_destroy(&cond_nonfull);
 	free(buffer);
+	printf("buffer clean called\n");
 }
 
 /**************************************************************************\
@@ -150,7 +151,7 @@ void *consumer_thread(void *raw_consumerno){
         if (number < 0)
             break;
 
-        usleep(10 * number);  /* "interpret" the command */
+        usleep(1000000 * number);  /* "interpret" the command */
         fflush(stdout);
     }
 
