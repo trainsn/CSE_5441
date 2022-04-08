@@ -18,7 +18,7 @@
 
 /* You should not change the value of DSIZE */
 const int DSIZE = 18432;
-int block_size = 8;
+int block_size = 32;
 const float A_val = 3.0f;
 const float B_val = 2.0f;
 
@@ -31,18 +31,13 @@ __global__ void mmul(const float *A, const float *B, float *C, int ds)
   float sum = 0.0f;
 
   for (int m = 0; m < (DSIZE+blockDim.x-1)/blockDim.x; m++){
-    // Read input elements into shared memory
     temp[blockDim.x * threadIdx.y + threadIdx.x] = ((idy < ds) && (m * blockDim.x + threadIdx.x < ds)) ? A[idy * ds + m * blockDim.x + threadIdx.x] : 0.0f;
-    temp[blockDim.x * blockDim.y + blockDim.x * threadIdx.y + threadIdx.x] = ((idx < ds) && (m * blockDim.x + threadIdx.y < ds)) ? B[(m * blockDim.x + threadIdx.x) * ds + idx] : 0.0f;
-
-    // Synchronize (ensure all the data is available)
+    temp[blockDim.x * blockDim.y + blockDim.x * threadIdx.y + threadIdx.x] = ((idx < ds) && (m * blockDim.x + threadIdx.y < ds)) ? B[(m * blockDim.x + threadIdx.y) * ds + idx] : 0.0f;
     __syncthreads();
-
-    // dot product of row and column
     for (int k=0; k < blockDim.x; k++)
       sum += temp[blockDim.x * threadIdx.y + k] * temp[blockDim.x * blockDim.y + blockDim.x * k + threadIdx.x];
+    __syncthreads();
   }
-    
   if ((idx < ds) && (idy < ds))
     C[idy * ds + idx] = sum;
 }
@@ -116,13 +111,10 @@ int main(int argc, char *argv[])
   printf ("Done. Compute took %f seconds\n", t2sum);
 
   // Cuda processing sequence step 3 is complete
+  cudaFree(&d_A); cudaFree(&d_B); cudaFree(&d_C);
 
   // Verify results
-  for (int i = 0; i < DSIZE*DSIZE; i++) if (h_C[i] != A_val*B_val*DSIZE) {
-    printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], A_val*B_val*DSIZE); 
-    return -1;
-  }
+  for (int i = 0; i < DSIZE*DSIZE; i++) if (h_C[i] != A_val*B_val*DSIZE) {printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], A_val*B_val*DSIZE); return -1;}
   printf("Success!\n"); 
   return 0;
 }
-  
