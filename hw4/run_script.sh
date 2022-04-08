@@ -54,7 +54,7 @@ do
     fi
     echo "=====================================" | tee -a $subdir/$program-terminal-output
 
-    for block_size in #FIXME: Add the block sizes you want to test with here
+    for block_size in 8 16 24 32
     do
         outfile="$subdir/$program-$block_size-block-output"
         (time ./a.out $block_size) &> $outfile

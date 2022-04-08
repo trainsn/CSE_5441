@@ -1,5 +1,4 @@
 #include <stdio.h>
-
 // these are just for timing measurments
 #include <time.h>
 
@@ -17,33 +16,55 @@
     } while (0)
 
 
-const int DSIZE = 4096;
-const int block_size = 16;  // CUDA maximum is 1024 *total* threads in block
-const float A_val = 1.0f;
+/* You should not change the value of DSIZE */
+const int DSIZE = 18432;
+int block_size = 8;
+const float A_val = 3.0f;
 const float B_val = 2.0f;
 
 // matrix multiply (naive) kernel: C = A * B
-__global__ void mmul(const float *A, const float *B, float *C, int ds) {
-
+__global__ void mmul(const float *A, const float *B, float *C, int ds) 
+{
+  extern __shared__ float temp[];
   int idx = threadIdx.x+blockDim.x*blockIdx.x; // create thread x index
   int idy = threadIdx.y+blockDim.y*blockIdx.y; // create thread y index
+  float sum = 0.0f;
 
-  if ((idx < ds) && (idy < ds)){
-    float temp = 0;
-    for (int i = 0; i < ds; i++)
-      temp += A[FIXME*ds+i] * B[i*ds+FIXME];   // dot product of row and column
-    C[idy*ds+idx] = temp;
+  for (int m = 0; m < (DSIZE+blockDim.x-1)/blockDim.x; m++){
+    // Read input elements into shared memory
+    temp[blockDim.x * threadIdx.y + threadIdx.x] = ((idy < ds) && (m * blockDim.x + threadIdx.x < ds)) ? A[idy * ds + m * blockDim.x + threadIdx.x] : 0.0f;
+    temp[blockDim.x * blockDim.y + blockDim.x * threadIdx.y + threadIdx.x] = ((idx < ds) && (m * blockDim.x + threadIdx.y < ds)) ? B[(m * blockDim.x + threadIdx.x) * ds + idx] : 0.0f;
+
+    // Synchronize (ensure all the data is available)
+    __syncthreads();
+
+    // dot product of row and column
+    for (int k=0; k < blockDim.x; k++)
+      sum += temp[blockDim.x * threadIdx.y + k] * temp[blockDim.x * blockDim.y + blockDim.x * k + threadIdx.x];
   }
+    
+  if ((idx < ds) && (idy < ds))
+    C[idy * ds + idx] = sum;
 }
 
-int main(){
+int main(int argc, char *argv[])
+{
 
   float *h_A, *h_B, *h_C, *d_A, *d_B, *d_C;
+
 
   // these are just for timing
   clock_t t0, t1, t2;
   double t1sum=0.0;
   double t2sum=0.0;
+
+  if (argc == 2) {
+      block_size = atoi(argv[1]);
+      if (block_size <= 0) {
+          fprintf(stderr, "Error: block_size should be >= 1\n");
+          exit (1);
+      }
+  }
 
   // start timing
   t0 = clock();
@@ -64,10 +85,14 @@ int main(){
 
   // Allocate device memory and copy input data over to GPU
   cudaMalloc(&d_A, DSIZE*DSIZE*sizeof(float));
+  cudaCheckErrors("cudaMalloc failure");
   cudaMalloc(&d_B, DSIZE*DSIZE*sizeof(float));
+  cudaCheckErrors("cudaMalloc failure");
   cudaMalloc(&d_C, DSIZE*DSIZE*sizeof(float));
   cudaCheckErrors("cudaMalloc failure");
+
   cudaMemcpy(d_A, h_A, DSIZE*DSIZE*sizeof(float), cudaMemcpyHostToDevice);
+  cudaCheckErrors("cudaMemcpy H2D failure");
   cudaMemcpy(d_B, h_B, DSIZE*DSIZE*sizeof(float), cudaMemcpyHostToDevice);
   cudaCheckErrors("cudaMemcpy H2D failure");
 
@@ -76,13 +101,14 @@ int main(){
   // Launch kernel
   dim3 block(block_size, block_size);  // dim3 variable holds 3 dimensions
   dim3 grid((DSIZE+block.x-1)/block.x, (DSIZE+block.y-1)/block.y);
-  mmul<<<grid, block>>>(d_A, d_B, d_C, DSIZE);
+  mmul<<<grid, block, 2 * block_size * block_size * sizeof(float), nullptr>>>(d_A, d_B, d_C, DSIZE);
   cudaCheckErrors("kernel launch failure");
 
   // Cuda processing sequence step 2 is complete
 
   // Copy results back to host
   cudaMemcpy(h_C, d_C, DSIZE*DSIZE*sizeof(float), cudaMemcpyDeviceToHost);
+  cudaCheckErrors("cudaMemcpy D2H failure");
 
   // GPU timing
   t2 = clock();
@@ -92,10 +118,11 @@ int main(){
   // Cuda processing sequence step 3 is complete
 
   // Verify results
-  cudaCheckErrors("kernel execution failure or cudaMemcpy H2D failure");
-  for (int i = 0; i < DSIZE*DSIZE; i++) if (h_C[i] != A_val*B_val*DSIZE) {printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], A_val*B_val*DSIZE); return -1;}
+  for (int i = 0; i < DSIZE*DSIZE; i++) if (h_C[i] != A_val*B_val*DSIZE) {
+    printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], A_val*B_val*DSIZE); 
+    return -1;
+  }
   printf("Success!\n"); 
-
   return 0;
 }
   
