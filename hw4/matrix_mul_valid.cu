@@ -1,4 +1,5 @@
 #include <stdio.h>
+
 // these are just for timing measurments
 #include <time.h>
 
@@ -18,7 +19,8 @@
 
 /* You should not change the value of DSIZE */
 int DSIZE = 18432;
-int block_size = 8;
+/* You should not change the value of DSIZE */
+int block_size = 8;  // CUDA maximum is 1024 *total* threads in block
 const float A_val = 3.0f;
 const float B_val = 2.0f;
 
@@ -37,11 +39,15 @@ __global__ void mmul(const float *A, const float *B, float *C, int ds)
   }
 }
 
+__global__ void mmul(/*FIXME*/)
+{
+    /* FIXME */
+}
+
 int main(int argc, char *argv[])
 {
   int validate = 0;
   float *h_A, *h_B, *h_C, *h_C1, *d_A, *d_B, *d_C;
-
 
   // these are just for timing
   clock_t t0, t1, t2;
@@ -102,9 +108,9 @@ int main(int argc, char *argv[])
   // Cuda processing sequence step 1 is complete
 
   // Launch kernel
-  dim3 block(block_size, block_size);  // dim3 variable holds 3 dimensions
-  dim3 grid((DSIZE+block.x-1)/block.x, (DSIZE+block.y-1)/block.y);
-  mmul<<<grid, block>>>(d_A, d_B, d_C, DSIZE);
+  dim3 block(/*FIXME - Set block size correctly*/);  // dim3 variable holds 3 dimensions
+  dim3 grid(/*FIXME - Set grid size correctly */);
+  /* FIXME: Call mmul_shared appropriately */
   cudaCheckErrors("kernel launch failure");
 
   // Cuda processing sequence step 2 is complete
@@ -118,7 +124,24 @@ int main(int argc, char *argv[])
   t2sum = ((double)(t2-t1))/CLOCKS_PER_SEC;
   printf ("Done. Compute took %f seconds\n", t2sum);
 
-  // Cuda processing sequence step 3 is complete
+  if (validate) {
+    printf ("Checking for validity of data\n");
+    mmul<<<grid, block>>>(d_A, d_B, d_C, DSIZE);
+    cudaCheckErrors("kernel launch failure");
+    // Copy results back to host
+    cudaMemcpy(h_C1, d_C, DSIZE*DSIZE*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaCheckErrors("cudaMemcpy D2H failure");
+    // Cuda processing sequence step 3 is complete
+  
+    // Verify results
+    for (int i = 0; i < DSIZE*DSIZE; i++) {
+      if (h_C[i] != h_C1[i]) {
+        printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], h_C1[i]);
+        return -1;
+      }
+    }
+  }
+  printf("Success!\n"); 
   return 0;
 }
   

@@ -17,12 +17,11 @@
 
 
 /* You should not change the value of DSIZE */
-const int DSIZE = 18432;
+int DSIZE = 18432;
 int block_size = 32;
 const float A_val = 3.0f;
 const float B_val = 2.0f;
 
-// matrix multiply (naive) kernel: C = A * B
 __global__ void mmul(const float *A, const float *B, float *C, int ds) 
 {
   extern __shared__ float temp[];
@@ -30,7 +29,7 @@ __global__ void mmul(const float *A, const float *B, float *C, int ds)
   int idy = threadIdx.y+blockDim.y*blockIdx.y; // create thread y index
   float sum = 0.0f;
 
-  for (int m = 0; m < (DSIZE+blockDim.x-1)/blockDim.x; m++){
+  for (int m = 0; m < (ds+blockDim.x-1)/blockDim.x; m++){
     temp[blockDim.x * threadIdx.y + threadIdx.x] = ((idy < ds) && (m * blockDim.x + threadIdx.x < ds)) ? A[idy * ds + m * blockDim.x + threadIdx.x] : 0.0f;
     temp[blockDim.x * blockDim.y + blockDim.x * threadIdx.y + threadIdx.x] = ((idx < ds) && (m * blockDim.x + threadIdx.y < ds)) ? B[(m * blockDim.x + threadIdx.y) * ds + idx] : 0.0f;
     __syncthreads();
@@ -42,10 +41,25 @@ __global__ void mmul(const float *A, const float *B, float *C, int ds)
     C[idy * ds + idx] = sum;
 }
 
-int main(int argc, char *argv[])
+// matrix multiply (naive) kernel: C = A * B
+__global__ void mmul_naive(const float *A, const float *B, float *C, int ds) 
 {
 
-  float *h_A, *h_B, *h_C, *d_A, *d_B, *d_C;
+  int idx = threadIdx.x+blockDim.x*blockIdx.x; // create thread x index
+  int idy = threadIdx.y+blockDim.y*blockIdx.y; // create thread y index
+
+  if ((idx < ds) && (idy < ds)){
+    float temp = 0;
+    for (int i = 0; i < ds; i++)
+      temp += A[idy*ds+i] * B[i*ds+idx];   // dot product of row and column
+    C[idy*ds+idx] = temp;
+  }
+}
+
+int main(int argc, char *argv[])
+{
+  int validate = 0;
+  float *h_A, *h_B, *h_C, *h_C1, *d_A, *d_B, *d_C;
 
 
   // these are just for timing
@@ -53,8 +67,15 @@ int main(int argc, char *argv[])
   double t1sum=0.0;
   double t2sum=0.0;
 
-  if (argc == 2) {
-      block_size = atoi(argv[1]);
+  if (argc >= 2) {
+      validate = atoi(argv[1]);
+      if (validate) {
+        DSIZE = 16000;
+      }
+  }
+
+  if (argc == 3) {
+      block_size = atoi(argv[2]);
       if (block_size <= 0) {
           fprintf(stderr, "Error: block_size should be >= 1\n");
           exit (1);
@@ -67,10 +88,16 @@ int main(int argc, char *argv[])
   h_A = new float[DSIZE*DSIZE];
   h_B = new float[DSIZE*DSIZE];
   h_C = new float[DSIZE*DSIZE];
-  for (int i = 0; i < DSIZE*DSIZE; i++){
-    h_A[i] = A_val;
-    h_B[i] = B_val;
+  if (validate) {
+    h_C1 = new float[DSIZE*DSIZE];
+  }
+  for (int i = 0; i < DSIZE*DSIZE; i++) {
+    h_A[i] = (i+1)*A_val;
+    h_B[i] = (i+1)*B_val;
     h_C[i] = 0;
+    if (validate) {
+      h_C1[i] = 0;
+    }
   }
 
   // Initialization timing
@@ -110,11 +137,23 @@ int main(int argc, char *argv[])
   t2sum = ((double)(t2-t1))/CLOCKS_PER_SEC;
   printf ("Done. Compute took %f seconds\n", t2sum);
 
-  // Cuda processing sequence step 3 is complete
+  if (validate) {
+    printf ("Checking for validity of data\n");
+    mmul_naive<<<grid, block>>>(d_A, d_B, d_C, DSIZE);
+    cudaCheckErrors("kernel launch failure");
+    // Copy results back to host
+    cudaMemcpy(h_C1, d_C, DSIZE*DSIZE*sizeof(float), cudaMemcpyDeviceToHost);
+    cudaCheckErrors("cudaMemcpy D2H failure");
+    // Cuda processing sequence step 3 is complete
+  
+    // Verify results
+    for (int i = 0; i < DSIZE*DSIZE; i++) {
+      if (h_C[i] != h_C1[i]) {
+        printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], h_C1[i]);
+        return -1;
+      }
+    }
+  }
   cudaFree(&d_A); cudaFree(&d_B); cudaFree(&d_C);
-
-  // Verify results
-  for (int i = 0; i < DSIZE*DSIZE; i++) if (h_C[i] != A_val*B_val*DSIZE) {printf("mismatch at index %d, was: %f, should be: %f\n", i, h_C[i], A_val*B_val*DSIZE); return -1;}
-  printf("Success!\n"); 
   return 0;
 }
