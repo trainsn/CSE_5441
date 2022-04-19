@@ -54,7 +54,7 @@ if (rank < 2) {
     }
   if (rank == 1) {
     src = 0;
-    offset = REPS;
+    offset = 0;
     }
   dest = src;
 

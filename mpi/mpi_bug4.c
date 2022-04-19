@@ -40,15 +40,15 @@ if (taskid == MASTER){
     data[i] =  i * 1.0;
     sum = sum + data[i];
     }
-  printf("Initialized array sum = %e\n",sum);
-  printf("numtasks= %d  chunksize= %d  leftover= %d\n",numtasks,chunksize,leftover);
+  fprintf(stderr,  "Initialized array sum = %e\n",sum);
+  fprintf(stderr,  "numtasks= %d  chunksize= %d  leftover= %d\n",numtasks,chunksize,leftover);
 
   /* Send each task its portion of the array - master keeps 1st part plus leftover elements */
   offset = chunksize + leftover;
   for (dest=1; dest<numtasks; dest++) {
     MPI_Send(&offset, 1, MPI_INT, dest, tag1, MPI_COMM_WORLD);
     MPI_Send(&data[offset], chunksize, MPI_DOUBLE, dest, tag2, MPI_COMM_WORLD);
-    printf("Sent %d elements to task %d offset= %d\n",chunksize,dest,offset);
+    fprintf(stderr,  "Sent %d elements to task %d offset= %d\n",chunksize,dest,offset);
     offset = offset + chunksize;
     }
 
@@ -64,16 +64,19 @@ if (taskid == MASTER){
       MPI_COMM_WORLD, &status);
     }
 
+  /* Use sum reduction operation to obtain final sum */
+  MPI_Reduce(&mysum, &sum, 1, MPI_DOUBLE, MPI_SUM, MASTER, MPI_COMM_WORLD);
+
   /* Get final sum and print sample results */  
-  printf("Sample results: \n");
+  fprintf(stderr,  "Sample results: \n");
   offset = 0;
   for (i=0; i<numtasks; i++) {
     for (j=0; j<5; j++) 
-      printf("  %e",data[offset+j]);
-    printf("\n");
+      fprintf(stderr,  "  %e",data[offset+j]);
+    fprintf(stderr,  "\n");
     offset = offset + chunksize;
     }
-  printf("*** Final sum= %e ***\n",sum);
+  fprintf(stderr,  "*** Final sum= %e ***\n",sum);
 
   }  /* end of master section */
 
@@ -114,10 +117,10 @@ double update(int myoffset, int chunk, int myid) {
   /* Perform addition to each of my array elements and keep my sum */
   mysum = 0;
   for(i=myoffset; i < myoffset + chunk; i++) {
-    data[i] = data[i] + (i * 1.0);
+    data[i] = i * 1.0;
     mysum = mysum + data[i];
     }
-  printf("Task %d mysum = %e\n",myid,mysum);
+  fprintf(stderr,  "Task %d mysum = %e\n",myid,mysum);
   return(mysum);
   }
 
