@@ -1,0 +1,46 @@
+This program performs sorting on arrays of randomly generated integers in a
+tiered producer-consumer fashion that is similar to "map-reduce".
+
+Arrays are created by a producer process and sent to "producer-consumer" 
+processes, which sort the arrays.  The "producer-consumers" send sorted array 
+data to a final consumer that combines the data into one large array.
+
+           Initial Producer
+                    |
+                +---+--+
+                |      |
+                |  ... |
+                |      |
+                V      V
+       Prod-Cons_1 ... Prod-Cons_n
+                |      |
+                |  ... |
+                |      |
+                +---+--+
+                    |
+                    V
+             Final Consumer
+
+Notice that there are n+2 processes total.
+
+This program should be compiled using the following command:
+
+mpicc prod_cons_no_sleep.c -O3 -o prod_cons.exe
+
+You may run the program on LittleFe using the following example command:
+
+mpirun -np 12 -machinefile machines-openmpi prod_cons.exe 1000 100 10
+
+In the command above, 1000 represents the number of arrays to create, 100
+represents the range of numbers created (0 to 99), and 10 represents the 
+number of processes that will act as "producer-consumers".  There will always
+be one process that acts as the initial producer and one that acts as the
+final consumer.
+
+You may run the program on Stampede with the following command after 
+transferring the batch script via sftp to Stampede:
+
+sbatch pcns.sbatch
+
+Note that to modify the input parameters for running the program on Stampede,
+you will need to modify the batch file.
