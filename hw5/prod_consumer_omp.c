@@ -97,9 +97,9 @@ int extract_data(int consumerno){
 	int value = -1;
 
 	/* Wait until producers have put something in the buffer */
-	int finish_exarct = 0;
+	int finish_extract = 0;
 	while (1) {
-		if (finish_exarct) {
+		if (finish_extract) {
 			return value;
 		}
 # pragma omp critical
@@ -111,7 +111,7 @@ int extract_data(int consumerno){
 				printf("%d consumer %d extracting %d from %d\n", count, consumerno, value, tail);
 				tail = (tail + 1) % MAX_BUF_SIZE;
 				count--;
-				finish_exarct = 1;
+				finish_extract = 1;
 			}
 		}
 	}
