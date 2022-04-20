@@ -70,7 +70,7 @@ int num_procs = -1, myid = -1, namelen;
 char hostname[MPI_MAX_PROCESSOR_NAME];
 
 #define MAXLINELEN 128
-#define MAX_ARRAY_SIZE 1500
+#define MAX_ARRAY_SIZE 1600
 int input_array[MAX_ARRAY_SIZE];
 int output_array[MAX_ARRAY_SIZE];
 int numItem = 0;
@@ -191,40 +191,53 @@ int main(int argc, char *argv[])
 			int number = atoi(tmp_buffer);
 			input_array[numItem++] = number;
 		}
+		for (int i = 0; i < nconsumers; i++) {
+			input_array[numItem++] = -1;
+		}
 
-		//Perform process-level workload distribution by sending(groups of) work items to each remote MPI process
-		int cursor = 0;
 		for (int i = 0; i < MAX_NUM_PROCS - 1; i++) {
-			int curItem, curProd, curCon;
-			if (i < numItem % (MAX_NUM_PROCS - 1)) {
-				curItem = numItem / (MAX_NUM_PROCS - 1) + 1;
+			int curProd, curCon;
+			if (i < nproducers % (MAX_NUM_PROCS - 1)) {
 				curProd = nproducers / (MAX_NUM_PROCS - 1) + 1;
+			}
+			else {
+				curProd = nproducers / (MAX_NUM_PROCS - 1);
+			}
+			if (i < nconsumers % (MAX_NUM_PROCS - 1)) {
 				curCon = nconsumers / (MAX_NUM_PROCS - 1) + 1;
 			}
 			else {
-				curItem = numItem / (MAX_NUM_PROCS - 1);
-				curProd = nproducers / (MAX_NUM_PROCS - 1);
 				curCon = nconsumers / (MAX_NUM_PROCS - 1);
 			}
-
-			printf("sending %d items to process %d\n", curItem, i);
 			MPI_Send(&curProd, 1, MPI_INT, i + 1, 0, MPI_COMM_WORLD);
 			MPI_Send(&curCon, 1, MPI_INT, i + 1, 1, MPI_COMM_WORLD);
-			MPI_Send(&curItem, 1, MPI_INT, i + 1, 2, MPI_COMM_WORLD);
-			MPI_Send(&input_array[cursor], curItem, MPI_INT, i + 1, 3, MPI_COMM_WORLD);
+		}
 
-			cursor += curItem;
+		//Perform process-level workload distribution by sending(groups of) work items to each remote MPI process
+		int processid; 
+		for (int i = 0; i < numItem; i++) {
+			MPI_Recv(&processid, 1, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &Stat);
+			fprintf(stderr, "Send %d to process %d\n", input_array[i], processid);
+			MPI_Send(&input_array[i], 1, MPI_INT, processid, 3, MPI_COMM_WORLD);
 		}
 	}
 	else {
-		int tmp_array[MAX_ARRAY_SIZE / (MAX_NUM_PROCS - 1) + 1];
-		int curItem, curProd, curCon;
+		int curProd, curCon;
 		MPI_Recv(&curProd, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &Stat);
 		MPI_Recv(&curCon, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, &Stat);
-		MPI_Recv(&curItem, 1, MPI_INT, 0, 2, MPI_COMM_WORLD, &Stat);
-		MPI_Recv(tmp_array, curItem, MPI_INT, 0, 3, MPI_COMM_WORLD, &Stat);
+		fprintf(stderr, "Process %d has %d producers and %d consumers\n", myid, curProd, curCon);
 
-		printf("process %d receive %d items\n", myid, curItem);
+		int prodFinished = 0;
+		int number = 0;
+		while (prodFinished != curCon) {
+			MPI_Send(&myid, 1, MPI_INT, 0, 2, MPI_COMM_WORLD);
+			MPI_Recv(&number, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &Stat);
+			fprintf(stderr, "Process %d receive %d\n", myid, number);
+			if (number == -1) {
+				prodFinished++;
+			}
+			//fprintf(stderr, "Process %d %d\n", myid, prodFinished);
+		}
 	}
 
 	MPI_Finalize();
