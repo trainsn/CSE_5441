@@ -68,17 +68,12 @@ int buffer[MAX_BUF_SIZE] = { 0 };
 int count = 0, head = 0, tail = 0;
 int num_procs = -1, myid = -1, namelen;
 char hostname[MPI_MAX_PROCESSOR_NAME];
+MPI_Status Stat;
 
 #define MAXLINELEN 128
-#define MAX_ARRAY_SIZE 1600
-int input_array[MAX_ARRAY_SIZE];
-int output_array[MAX_ARRAY_SIZE];
-int numItem = 0;
 
 #define PROD_SLAVE_SEND_TAG 42
-#define PROD_MASTER_SEND_TAG 42
-#define CON_SLAVE_SEND_TAG 44
-#define CON_MASTER_SEND_TAG 45
+#define PROD_MASTER_SEND_TAG 43
 
 void insert_data(int producerno, int number){
 	/* Wait until consumers consumed something from the buffer and there is space */
@@ -124,6 +119,65 @@ int extract_data(int consumerno){
 	}
 }
 
+/**************************************************************************\
+ *                                                                        *
+ * The consumer. Each consumer reads and "interprets"                     *
+ * numbers from the bounded buffer.                                       *
+ *                                                                        *
+ * The interpretation is as follows:                                      *
+ *                                                                        *
+ * o  positive integer N: sleep for N * 100ms                             *
+ * o  negative integer:  exit                                             *
+ *                                                                        *
+\**************************************************************************/
+
+void consumer(int nproducers, int nconsumers, int consumerno)
+{
+	/* Do not move this declaration */
+	int number = -1;
+
+	{
+		while (1)
+		{
+			number = extract_data(consumerno);
+
+			/* Do not remove this print. Used for data validation */
+			if (number < 0)
+				break;
+
+			usleep(10 * number);  /* "interpret" command for development */
+			//usleep(100000 * number);  /* "interpret" command for submission */
+			fflush(stdout);
+		}
+	}
+
+	return;
+}
+
+/**************************************************************************\
+ *                                                                        *
+ * Each producer reads numbers from stdin, and inserts them into the      *
+ * bounded buffer.  On EOF from stdin, it finished up by inserting a -1   *
+ * for every consumer so that all the consumers exit cleanly              *
+ *                                                                        *
+\**************************************************************************/
+
+#define MAXLINELEN 128
+
+void producer(int nproducers, int nconsumers, int producerno){
+	while (1) {
+		// fprintf(stderr, "Process %d send request\n", myid);
+		MPI_Send(&myid, 1, MPI_INT, 0, PROD_SLAVE_SEND_TAG, MPI_COMM_WORLD);
+		int number;
+		MPI_Recv(&number, 1, MPI_INT, 0, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD, &Stat);
+		// fprintf(stderr, "Process %d receive number %d\n", myid, number);
+		if (number == -2) {
+			break;
+		}
+		insert_data(producerno, number);
+	}
+}
+
 /*************************************************************************\
  *                                                                       *
  * main program.  Main calls does necessary initialization.              *
@@ -139,21 +193,20 @@ int main(int argc, char *argv[])
 	int nconsumers = 1;
 
 	if (argc != 3) {
-		fprintf(stderr, "Error: This program takes one input.\n");
-		fprintf(stderr, "e.g. ./a.out nproducers nconsumers < <input_file>\n");
+		 fprintf(stderr, "Error: This program takes one input.\n");
+		 fprintf(stderr, "e.g. ./a.out nproducers nconsumers < <input_file>\n");
 		exit(1);
 	}
 	else {
 		nproducers = atoi(argv[1]);
 		nconsumers = atoi(argv[2]);
 		if (nproducers <= 0 || nconsumers <= 0) {
-			fprintf(stderr, "Error: nproducers & nconsumers should be >= 1\n");
+			 fprintf(stderr, "Error: nproducers & nconsumers should be >= 1\n");
 			exit(1);
 		}
-		assert(!(nproducers % (MAX_NUM_PROCS - 1)) && !(nconsumers % (MAX_NUM_PROCS - 1)));
 	}
+	nproducers = 1;
 	
-	MPI_Status Stat;
 	/***** MPI Initializations - get rank, comm_size and hostame - refer to
 	 * bugs/examples for necessary code *****/
 	MPI_Init(&argc, &argv);
@@ -161,120 +214,62 @@ int main(int argc, char *argv[])
 	MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 	MPI_Get_processor_name(hostname, &namelen);
 	if (num_procs > MAX_NUM_PROCS) {
-		fprintf(stderr, "Error: Max num procs should <= 5\n");
+		 fprintf(stderr, "Error: Max num procs should <= 5\n");
 		exit(1);
 	}
 
+	 fprintf(stderr, "Process %d has %d producers and %d consumers\n", myid, nproducers, nconsumers);
+
+	int threads_count;
 	if (!myid) {
-		fprintf(stderr, "main: nproducers = %d, nconsumers = %d\n", nproducers, nconsumers);
-
-		// input
-		char tmp_buffer[MAXLINELEN]; 
-		while (fgets(tmp_buffer, MAXLINELEN, stdin) != NULL) {
-			int number = atoi(tmp_buffer);
-			input_array[numItem++] = number;
-		}
-		for (int i = 0; i < nconsumers; i++) {
-			input_array[numItem++] = -1;
-		}
-
-		int perProd, perCon;
-		for (int i = 0; i < MAX_NUM_PROCS - 1; i++) {
-			perProd = nproducers / (MAX_NUM_PROCS - 1);
-			perCon = nconsumers / (MAX_NUM_PROCS - 1);
-
-			MPI_Send(&perProd, 1, MPI_INT, i + 1, 0, MPI_COMM_WORLD);
-			MPI_Send(&perCon, 1, MPI_INT, i + 1, 1, MPI_COMM_WORLD);
-		}
-
-		//Perform process-level workload distribution by sending(groups of) work items to each remote MPI process
-		int cursor = 0;
-# pragma omp parallel num_threads(2) default(shared) 
-		{
-			int thread_id = omp_get_thread_num();
-			if (!thread_id) {
-				int con_done_count = 0;
-				while (1) {
-					int consumerno;
-					MPI_Recv(&consumerno, 1, MPI_INT, MPI_ANY_SOURCE, CON_SLAVE_SEND_TAG, MPI_COMM_WORLD, &Stat);
-					int process_id = consumerno / perCon;
-					//fprintf(stderr, "Receive request from consumer %d from process %d\n", consumerno, process_id);
-					assert(process_id == Stat.MPI_SOURCE);
-					int number = extract_data(consumerno);
-					//fprintf(stderr, "Send number %d to process %d\n", number, process_id);
-					MPI_Send(&number, 1, MPI_INT, process_id, CON_MASTER_SEND_TAG, MPI_COMM_WORLD);
-					if (number == -1) {
-						con_done_count++;
-					}
-					if (con_done_count == nconsumers) {
-						break;
-					}
-				}	
-			}
-			else {	// producer 
-				int prod_done_count = 0;
-				while (1) {
-					int producerno;
-					MPI_Recv(&producerno, 1, MPI_INT, MPI_ANY_SOURCE, PROD_SLAVE_SEND_TAG, MPI_COMM_WORLD, &Stat);
-					int process_id = producerno / perProd;
-					//fprintf(stderr, "Receive request from producer %d from process %d\n", producerno, process_id);
-					assert(process_id == Stat.MPI_SOURCE);
-					if (cursor < numItem) {
-						insert_data(producerno, input_array[cursor]);
-						//fprintf(stderr, "Send cursor %d to process %d\n", cursor, process_id);
-						MPI_Send(&cursor, 1, MPI_INT, process_id, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD);
-						cursor++;
-					}
-					else {
-						int message = -1;
-						MPI_Send(&message, 1, MPI_INT, process_id, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD);
-						prod_done_count++;
-						if (prod_done_count == nproducers) {
-							break;
-						}
-					}
-				}
-			}
-		}
+		threads_count = nproducers + nconsumers + 1;
 	}
 	else {
-		int perProd, perCon;
-		MPI_Recv(&perProd, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, &Stat);
-		MPI_Recv(&perCon, 1, MPI_INT, 0, 1, MPI_COMM_WORLD, &Stat);
-		fprintf(stderr, "Process %d has %d producers and %d consumers\n", myid, perProd, perCon);
-		
-# pragma omp parallel num_threads(perProd + perCon) default(shared) 
-		{
-			int thread_id = omp_get_thread_num();
-			if (thread_id < perCon){
-				int consumerno = myid * perCon + thread_id;
-				while (1) {
-					//fprintf(stderr, "Consumer %d send request\n", consumerno);
-					MPI_Send(&consumerno, 1, MPI_INT, 0, CON_SLAVE_SEND_TAG, MPI_COMM_WORLD);
-					int number;
-					MPI_Recv(&number, 1, MPI_INT, 0, CON_MASTER_SEND_TAG, MPI_COMM_WORLD, &Stat);
-					//fprintf(stderr, "Process %d receive number %d\n", myid, number);
-					if (number >= 0) {
-						usleep(10 * number);  /* "interpret" command for development */
-						//usleep(100000 * number);  /* "interpret" command for submission */
-					}
-					else {
-						break;
-					}
-				}
+		threads_count = nproducers + nconsumers;
+	}
+
+# pragma omp parallel num_threads(threads_count) default(shared) 
+	{
+		int thread_id = omp_get_thread_num();
+		if (thread_id < nconsumers) {	
+			int consumerno = thread_id;
+			/* Spawn N Consumer OpenMP Threads */
+			consumer(nproducers, nconsumers, consumerno);
+		}
+		else if (thread_id < nproducers + nconsumers){
+			int producerno = thread_id - nconsumers;
+			/* Spawn N Producer OpenMP Threads */
+			producer(nproducers, nconsumers, producerno);
+		}
+		else {
+			// input
+			char tmp_buffer[MAXLINELEN];
+			while (fgets(tmp_buffer, MAXLINELEN, stdin) != NULL) {
+				int number = atoi(tmp_buffer);
+				int slave_id;
+				MPI_Recv(&slave_id, 1, MPI_INT, MPI_ANY_SOURCE, PROD_SLAVE_SEND_TAG, MPI_COMM_WORLD, &Stat);
+				assert(slave_id == Stat.MPI_SOURCE);
+				// fprintf(stderr, "Receive request from process %d\n", Stat.MPI_SOURCE);
+				// fprintf(stderr, "Send number %d to process %d\n", number, Stat.MPI_SOURCE);
+				MPI_Send(&number, 1, MPI_INT, Stat.MPI_SOURCE, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD);
 			}
-			else {
-				int producerno = myid * perProd + thread_id - perCon;
-				while (1) {
-					//fprintf(stderr, "Producer %d send request\n", producerno);
-					MPI_Send(&producerno, 1, MPI_INT, 0, PROD_SLAVE_SEND_TAG, MPI_COMM_WORLD);
-					int cursor;
-					MPI_Recv(&cursor, 1, MPI_INT, 0, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD, &Stat);
-					//fprintf(stderr, "Process %d receive cursor %d\n", myid, cursor);
-					if (cursor < 0) {
-						break;
-					}
+			for (int i = 0; i < num_procs; i++) {
+				for (int j = 0; j < nconsumers; j++) {
+					int slave_id;
+					MPI_Recv(&slave_id, 1, MPI_INT, i, PROD_SLAVE_SEND_TAG, MPI_COMM_WORLD, &Stat);
+					assert(slave_id == i);
+					// fprintf(stderr, "Receive request from process %d\n", slave_id);
+					int message = -1;
+					// fprintf(stderr, "Send number %d to process %d\n", message, slave_id);
+					MPI_Send(&message, 1, MPI_INT, slave_id, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD);
 				}
+				int slave_id;
+				MPI_Recv(&slave_id, 1, MPI_INT, i, PROD_SLAVE_SEND_TAG, MPI_COMM_WORLD, &Stat);
+				assert(slave_id == i);
+				// fprintf(stderr, "Receive request from process %d\n", slave_id);
+				int message = -2;
+				// fprintf(stderr, "Send number %d to process %d\n", message, slave_id);
+				MPI_Send(&message, 1, MPI_INT, slave_id, PROD_MASTER_SEND_TAG, MPI_COMM_WORLD);
 			}
 		}
 	}
